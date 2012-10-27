@@ -25,11 +25,16 @@
 
 @interface LWHangDetector : NSObject
 
-/**
- Call from your application:didFinishLaunchingWithOptions: to start the hang detector. 
- An exception will be through from a background thread if the main thread is blocked 
- between 10-20 seconds.
- */
-+ (void)startHangDetector;
++ (instancetype) sharedHangDetector;
+
+- (id) initWithQueue:(dispatch_queue_t)queue interval:(NSTimeInterval)interval;
+@property (nonatomic, readonly, strong) dispatch_queue_t queue;
+@property (nonatomic, readonly, assign) NSTimeInterval interval;
+
+- (BOOL) isRunning;
+- (void) start;
+- (void) stop;
 
 @end
+
+extern NSString * const LWMainThreadDeadLockException;

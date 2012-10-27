@@ -1,45 +1,111 @@
 #import "LWHangDetector.h"
 
-static volatile NSInteger DEAD_SIGNAL = 0;
+NSString * const LWMainThreadDeadLockException = @"LWMainThreadDeadLockException";
 
 @interface LWHangDetector ()
-
-+ (void)_deadThreadTick;
-+ (void)_deadThreadMain;
-
+@property (nonatomic, readwrite, assign) BOOL deadSignal;
+@property (nonatomic, readwrite, strong) NSThread *deadThread;
+- (void) deadThreadMain;
+- (void) deadThreadTick;
 @end
 
 @implementation LWHangDetector
+@synthesize queue = _queue;
+@synthesize interval = _interval;
+@synthesize deadSignal = _deadSignal;
+@synthesize deadThread = _deadThread;
 
-+ (void)startHangDetector {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        NSThread *heartBeatThread = [[NSThread alloc] initWithTarget:self selector:@selector(_deadThreadMain) object:nil];
-        [heartBeatThread start];
-        [heartBeatThread release];
-    });
++ (instancetype) sharedHangDetector {
+
+	static dispatch_once_t onceToken;
+	static LWHangDetector *detector;
+	dispatch_once(&onceToken, ^{
+    detector = [self new];
+	});
+	
+	return detector;
+
 }
 
-#pragma mark - Private
+- (id) init {
 
-+ (void)_deadThreadTick {
-    if (DEAD_SIGNAL == 1) {
-        [NSException raise:@"LWDeadLockException" format:@"Main thread has not responded to our hails"];
-    }
-    
-    DEAD_SIGNAL = 1;
-    
-    dispatch_async(dispatch_get_main_queue(), ^{
-        DEAD_SIGNAL = 0;
-    });
+	return [self initWithQueue:dispatch_get_main_queue() interval:10.0f];
+
 }
 
-+ (void)_deadThreadMain {
-    [NSThread currentThread].name = @"HangDetection";
-    @autoreleasepool {
-        [NSTimer scheduledTimerWithTimeInterval:10.0 target:self selector:@selector(deadThreadTick) userInfo:nil repeats:YES];
-        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate distantFuture]];
-    }
+- (id) initWithQueue:(dispatch_queue_t)queue interval:(NSTimeInterval)interval {
+
+	self = [super init];
+	if (!self)
+		return nil;
+	
+	_queue = queue;
+	_interval = interval;
+	_deadSignal = 0;
+	
+	return self;
+
+}
+
+- (BOOL) isRunning {
+
+	return !!_deadThread;
+
+}
+
+- (void) start {
+
+	if (!_deadThread) {
+	
+		_deadThread = [[NSThread alloc] initWithTarget:self selector:@selector(deadThreadMain) object:nil];
+		_deadThread.name = [self description];
+		
+	}
+	
+	[_deadThread start];
+
+}
+
+- (void) stop {
+
+	if (_deadThread) {
+	
+		[_deadThread cancel];
+		_deadThread = nil;
+	
+	}
+
+}
+
+- (void) deadThreadMain {
+		
+	@autoreleasepool {
+		NSRunLoop *runLoop = [NSRunLoop currentRunLoop];
+		NSTimer *timer = [NSTimer timerWithTimeInterval:self.interval target:self selector:@selector(deadThreadTick) userInfo:nil repeats:YES];
+		[runLoop addTimer:timer forMode:NSRunLoopCommonModes];
+		[runLoop runUntilDate:[NSDate distantFuture]];
+	}
+		
+}
+
+- (void) deadThreadTick {
+  
+	@autoreleasepool {
+
+		if (_deadSignal) {
+			[NSException raise:LWMainThreadDeadLockException format:@"Main thread has not responded to our hails"];
+		}
+		
+		self.deadSignal = YES;
+		
+		__weak typeof(self) wSelf = self;
+		
+		dispatch_async(self.queue, ^{
+			wSelf.deadSignal = NO;
+		});
+	
+	}
+	
 }
 
 @end
